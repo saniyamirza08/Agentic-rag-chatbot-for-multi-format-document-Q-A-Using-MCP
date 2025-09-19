@@ -30,7 +30,7 @@ The application follows a multi-agent RAG architecture:
 -   **LLM:** OpenAI
 -   **Embeddings:** OpenAI
 -   **Document Parsing:** PyPDF2, python-docx, python-pptx, pandas
--   **Vector Store:** In-memory (NumPy)
+-   **Vector Store:** FAISS
 
 ## Setup and Installation
 
@@ -59,7 +59,7 @@ The application follows a multi-agent RAG architecture:
 
 5.  **Run the application:**
     ```bash
-    streamlit run main2.py
+    streamlit run main.py
     ```
 
 ## Usage
