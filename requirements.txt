@@ -1,0 +1,10 @@
+streamlit
+python-dotenv
+PyPDF2
+docx2txt
+python-pptx
+pandas
+sentence-transformers
+faiss-cpu
+openai==0.28
+

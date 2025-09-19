@@ -16,20 +16,21 @@ import pandas as pd
 # Groq client
 from groq import Groq
 import numpy as np
-import openai
+
 # --------------------------
 # Load env
 # --------------------------
-load_dotenv(override = True)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# print("OPENAI_API_KEY", OPENAI_API_KEY)
-if not OPENAI_API_KEY:
-    st.error("OpenAI API key not set in environment variables! Please set OPENAI_API_KEY.")
-openai.api_key = OPENAI_API_KEY
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("OPEN_AI_KEY")
+if not GROQ_API_KEY:
+    st.error("Groq API key not set in environment variables!")
+else:
+    groq_client = Groq(api_key=GROQ_API_KEY)
+
 # --------------------------
 # Embedding model
 # --------------------------
-EMBEDDING_MODEL = "text-embedding-ada-002"
+EMBEDDING_MODEL = "groq/compound-mini"
 
 # --------------------------
 # Helper utilities
@@ -140,14 +141,16 @@ class RetrievalAgent:
         if not texts:
             return {"error": "No texts to add"}
         
-        resp = openai.Embedding.create(
+        resp = groq_client.embeddings.create(
             model=EMBEDDING_MODEL,
             input=texts
         )
+        
         for emb_data in resp['data']:
             emb_vector = np.array(emb_data['embedding'], dtype=np.float32)
             emb_vector /= np.linalg.norm(emb_vector) + 1e-10
             self.embeddings.append(emb_vector)
+        
         self.documents.extend(texts)
         self.metadatas.extend(metadatas)
         return {"status": "added", "count": len(texts)}
@@ -156,7 +159,7 @@ class RetrievalAgent:
         if not self.embeddings:
             return [{"error": "No documents added yet"}]
 
-        q_emb = openai.Embedding.create(
+        q_emb = groq_client.embeddings.create(
             model=EMBEDDING_MODEL,
             input=query_text
         )['data'][0]['embedding']
@@ -200,7 +203,7 @@ class LLMResponseAgent:
 
     def call_llm(self, prompt: str) -> Dict[str, Any]:
         try:
-            resp = openai.ChatCompletion.create(
+            resp = groq_client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
@@ -270,18 +273,6 @@ if uploaded_files:
             st.error(f"Failed to parse {file.name}: {metas}")
     if all_texts:
         st.success(f"Ingested {len(all_texts)} chunks from {len(uploaded_files)} files")
-        ingestion_msg = MCPMessage(
-            sender="IngestionAgent",
-            receiver="CoordinatorAgent",
-            type="INGESTION_COMPLETE",
-            trace_id=uuid.uuid4().hex,
-            payload={
-                "files": [f.name for f in uploaded_files],
-                "chunk_count": len(all_texts),
-            }
-        )
-        print("=== Ingestion Phase ===")
-        print(json.dumps(ingestion_msg.to_dict(), indent=2))
     for p in temp_paths:
         try: os.remove(p)
         except: pass
@@ -295,13 +286,9 @@ if query:
     trace_id = uuid.uuid4().hex
     mcp_in = MCPMessage(sender='Coordinator', receiver='LLMResponseAgent', type='RETRIEVAL_RESULT', trace_id=trace_id, payload={'query': query, 'retrieved': retrieved, 'chat_history': st.session_state.chat_history})
     st.session_state.trace_entries.append(mcp_in.to_dict())
-    print("\n=== Retrieval Phase ===")
-    print(json.dumps(mcp_in.to_dict(), indent=2))
 
     mcp_out = st.session_state.llm_agent.handle_mcp(mcp_in)
     st.session_state.trace_entries.append(mcp_out.to_dict())
-    print("\n=== Response Phase ===")
-    print(json.dumps(mcp_out.to_dict(), indent=2))
 
     payload = mcp_out.payload
     if payload.get('error'):
@@ -331,4 +318,3 @@ if st.session_state.chat_history:
 if st.sidebar.button('Download MCP trace (.json)'):
     trace_json = json.dumps(st.session_state.trace_entries, indent=2)
     st.sidebar.download_button('Download trace', data=trace_json, file_name='mcp_trace.json', mime='application/json')
-
