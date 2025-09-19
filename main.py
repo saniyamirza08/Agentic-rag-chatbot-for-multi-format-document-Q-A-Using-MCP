@@ -13,10 +13,10 @@ import docx2txt
 from pptx import Presentation
 import pandas as pd
 
-# Groq client
-from groq import Groq
+
 import numpy as np
 import openai
+import faiss
 # --------------------------
 # Load env
 # --------------------------
@@ -129,12 +129,12 @@ class IngestionAgent:
 # Retrieval agent (Groq embeddings)
 # --------------------------
 class RetrievalAgent:
-    """Optimized Retrieval Agent using Groq embeddings."""
+    """Optimized Retrieval Agent using FAISS."""
 
     def __init__(self):
         self.documents: List[str] = []
         self.metadatas: List[Dict[str, Any]] = []
-        self.embeddings: List[np.ndarray] = []
+        self.index = None
 
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         if not texts:
@@ -144,32 +144,36 @@ class RetrievalAgent:
             model=EMBEDDING_MODEL,
             input=texts
         )
-        for emb_data in resp['data']:
-            emb_vector = np.array(emb_data['embedding'], dtype=np.float32)
-            emb_vector /= np.linalg.norm(emb_vector) + 1e-10
-            self.embeddings.append(emb_vector)
+        embeddings = [np.array(emb_data['embedding'], dtype=np.float32) for emb_data in resp['data']]
+        for emb in embeddings:
+            emb /= np.linalg.norm(emb) + 1e-10
+
+        if self.index is None:
+            dimension = len(embeddings[0])
+            self.index = faiss.IndexFlatL2(dimension)
+
+        self.index.add(np.array(embeddings))
         self.documents.extend(texts)
         self.metadatas.extend(metadatas)
         return {"status": "added", "count": len(texts)}
 
     def query(self, query_text: str, k: int = 3) -> List[Dict[str, Any]]:
-        if not self.embeddings:
+        if self.index is None:
             return [{"error": "No documents added yet"}]
 
         q_emb = openai.Embedding.create(
             model=EMBEDDING_MODEL,
             input=query_text
         )['data'][0]['embedding']
-        q_vec = np.array(q_emb, dtype=np.float32)
-        q_vec /= np.linalg.norm(q_vec) + 1e-10
+        q_vec = np.array([q_emb], dtype=np.float32)
+        q_vec[0] /= np.linalg.norm(q_vec[0]) + 1e-10
 
-        sims = [(float(np.dot(q_vec, d_vec)), i) for i, d_vec in enumerate(self.embeddings)]
-        sims.sort(key=lambda x: x[0], reverse=True)
+        distances, indices = self.index.search(q_vec, k)
 
         results = []
-        for score, idx in sims[:k]:
+        for i, idx in enumerate(indices[0]):
             results.append({
-                "score": score,
+                "score": float(1 - distances[0][i]),  # Convert L2 distance to similarity score
                 "text": self.documents[idx],
                 "metadata": self.metadatas[idx],
             })
@@ -229,8 +233,8 @@ class LLMResponseAgent:
 # --------------------------
 # Streamlit UI
 # --------------------------
-st.set_page_config(page_title='Agentic RAG Chatbot (Groq)', layout='wide')
-st.title('Agentic RAG Chatbot (Groq) for Multi-Format Documents')
+st.set_page_config(page_title='Agentic RAG Chatbot (Openai)', layout='wide')
+st.title('Agentic RAG Chatbot (Openai) for Multi-Format Documents')
 
 with st.sidebar:
     st.header('Upload Documents')
